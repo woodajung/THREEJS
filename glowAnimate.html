@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>glow animation</title>
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <link href="./js/jquery.ui/jquery-ui.css" type="text/css" rel="stylesheet">
+        <style>
+            body { 
+                padding:0;
+                margin:0;
+                overflow:hidden;
+				/*background-color: #000;*/
+             }
+            canvas { width: 100%; height: 100% }
+
+            /* object loader progressbar */
+			.ui-progressbar { display: none; width: 150px; height: 15px; position: absolute; left: 50%; top: 50%; margin-left: -75px; margin-top: -7px; }
+			.progress-label { position: absolute; left: 50%; top: 1px; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 0 #fff; margin-left:-10px; }
+			.ui-widget-header { border: 1px solid lightgray; background: url("./js/jquery.ui/images/ui-bg_highlight-soft_75_cccccc_1x100.png") 50% 50% repeat-x; font-weight: bold; margin-left:-10px; }
+        </style>
+    </head>
+    <body>
+        <div id="progressbar">
+            <div id="progress-label"></div>
+        </div>
+        <script type="text/javascript" src="./js/jquery-3.4.1/jquery.min.js" charset="utf-8"></script>
+		<script type="text/javascript" src="./js/jquery-ui.1.12.1/jquery-ui.min.js"></script>
+        <script type="text/javascript" src="./js/three-0.106.2/three.min.js" charset="utf-8"></script>
+        <script type="text/javascript" src="./js/three-0.106.2/libs/Tween.js"></script>
+        <script type="text/javascript" src="./js/three-0.106.2/controls/TrackballControls.js"></script>
+        <script type="text/javascript" src="./js/three-0.106.2/loaders/MTLLoader.js"></script>
+        <script type="text/javascript" src="./js/three-0.106.2/loaders/OBJLoader.js"></script>
+        <script type="text/javascript" src="./js/threex.geometricglow/threex.dilategeometry.js"></script>
+        <script id="vertexShader" type="x-shader/x-vertex">
+            varying vec3 vVertexWorldPosition;
+            varying vec3 vVertexNormal;
+            varying vec4 vFragColor;
+
+            void main() {
+                vVertexNormal = normalize(normalMatrix * normal); 
+                vVertexWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+                gl_Position    = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        </script>
+        <script id="fragmentShader" type="x-shader/x-fragment">
+            uniform vec3 glowColor;
+            uniform float coeficient;
+            uniform float power;
+            varying vec3 vVertexNormal;
+            varying vec3 vVertexWorldPosition;
+            varying vec4 vFragColor;
+
+            void main() {
+                vec3 worldCameraToVertex= vVertexWorldPosition - cameraPosition;
+                vec3 viewCameraToVertex    = (viewMatrix * vec4(worldCameraToVertex, 0.0)).xyz;
+                viewCameraToVertex = normalize(viewCameraToVertex);
+                float intensity = pow(coeficient + dot(vVertexNormal, viewCameraToVertex), power);
+                gl_FragColor = vec4(glowColor, intensity);
+            }
+        </script>
+        <script type="text/javascript">
+            var scene, renderer, camera, controls, glowInMaterial, glowOutMaterial;
+            init();
+
+            function init() {
+                renderer = new THREE.WebGLRenderer({alpha: true, antialias: true});
+                renderer.setPixelRatio( window.devicePixelRatio );
+                renderer.setSize( window.innerWidth, window.innerHeight );
+                renderer.autoClear = false;
+                
+                //renderer.shadowMap.enabled = true;                    //그림자 효과 추가
+                //renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                //renderer.gammaInput = true;                           //material 광택 효과 추가
+                //renderer.gammaOutput = true;
+
+                document.body.appendChild( renderer.domElement );
+                
+                scene = new THREE.Scene();
+
+                camera = new THREE.PerspectiveCamera( 
+                    45,                                         //FOV
+                    window.innerWidth / window.innerHeight,     //aspect
+                    1,                                          //near clipping plane
+                    10000                                       //far clipping plane
+                );
+                camera.position.set( 0, 100, 200 );
+                camera.lookAt(scene.position);
+
+                controls = new THREE.TrackballControls(camera, renderer.domElement);
+                //controls.rotateSpeed = 1.0;
+                //controls.zoomSpeed = 1.2;
+                //controls.panSpeed = 0.8;
+                controls.enabled = true;
+                //controls.dynamicDampingFactor = 0.3;
+                //controls.keys = [ 65, 83, 68 ];
+
+                // set up ambient light
+                var ambientLight = new THREE.AmbientLight(new THREE.Color('#ffffff'), 1);
+                scene.add(ambientLight);
+
+                var light = new THREE.PointLight(0xffffff);
+                //light.shadow.camera.left = -window.innerWidth / 2;
+                //light.shadow.camera.right = window.innerWidth / 2;
+                //light.shadow.camera.top = -window.innerHeight / 2;
+                //light.shadow.camera.bottom = window.innerHeight / 2;
+                //light.shadow.camera.far = 2500;
+                //light.shadow.mapSize.Width = 2048;
+                //light.shadow.mapSize.Height = 2048;
+                //light.castShadow = true;
+                light.position.set(0, 100, 200);
+                scene.add(light);
+                var lightHelper = new THREE.PointLightHelper(light);
+                scene.add(lightHelper);
+
+                //바닥 추가
+                var planeGeometry = new THREE.PlaneGeometry( 100, 100 );
+                var planeMaterial = new THREE.MeshBasicMaterial( {color: new THREE.Color('#b1b4ba'), side: THREE.DoubleSide} );
+                var plane = new THREE.Mesh(planeGeometry, planeMaterial);
+                plane.rotation.x = -Math.PI / 2;
+                plane.receiveShadow = true;
+                scene.add(plane);
+                
+                //shader load
+                var vShader = document.getElementById( 'vertexShader' ).innerHTML;
+                var fShader = document.getElementById( 'fragmentShader' ).innerHTML;
+
+                glowInMaterial = new THREE.ShaderMaterial({
+                    uniforms: {
+                        "coeficient":   { type: "f", value: 1.1 },
+                        "power":   { type: "f", value: 1.4 },
+                        "glowColor": { type: "c", value: new THREE.Color('#f43b51') }
+                    },
+                    vertexShader: vShader,
+                    fragmentShader: fShader,
+                    transparent: true,
+                    depthWrite: false
+                });
+                glowOutMaterial = new THREE.ShaderMaterial({
+                    uniforms: {
+                        "coeficient":   { type: "f", value: 0.1 },
+                        "power":   { type: "f", value: 0.6 },
+                        "glowColor": { type: "c", value: new THREE.Color('#f43b51') }
+                    },
+                    vertexShader: vShader,
+                    fragmentShader: fShader,
+                    side: THREE.BackSide,
+                    transparent: true,
+                    depthWrite: false
+                });
+
+                //loading manager 추가
+                /*var $progressbar = $('#progressbar');
+				var manager = new THREE.LoadingManager();
+			    manager.onStart = function (url, itemsLoaded, itemsTotal) {
+				    console.debug('3D Component Object, Loading Start!');
+					$progressbar.progressbar({
+						value: false,
+						change: function() {
+							$progressbar.children('.progress-label').text( $progressbar.progressbar( "value" ) + "%" );
+						}
+                    });
+                    $progressbar.css('display', 'block');
+			    };
+			    manager.onProgress = function ( url, itemsLoaded, itemsTotal ) {
+				    var val = itemsLoaded / itemsTotal * 100;
+				    $progressbar.progressbar('value', Math.floor(val));
+			    };
+				manager.onError = function(url) {
+					console.error('There was an error loading: ' + url);
+				};
+				manager.onLoad = function () {
+					$progressbar.css('display', 'none');
+                };*/
+
+                //obj 로드
+                /*var mtlLoader = new THREE.MTLLoader(manager);
+                mtlLoader.setPath('./js/three-0.106.2/models/');
+                mtlLoader.load('server.mtl', function(materials) {
+                    materials.preload();
+                    var objLoader = new THREE.OBJLoader(manager);
+                    objLoader.setPath('./js/three-0.106.2/models/');
+                    objLoader.setMaterials(materials);
+                    objLoader.load('server.obj', function(obj) {
+                        obj.traverse(function (child) {
+                            if (child instanceof THREE.Mesh) {
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                                child.material.needsUpdate = true;
+                                if (child.name === 'glow') {
+                                    addGlow(child);
+                                }
+                            }
+                        });
+                        obj.name = 'server';
+                        //obj.position.copy(jsonInfo.position);
+                        //obj.rotation.x += THREE.Math.degToRad(jsonInfo.rotation.x);
+                        //obj.rotation.y += THREE.Math.degToRad(jsonInfo.rotation.y);
+                        //obj.rotation.z += THREE.Math.degToRad(jsonInfo.rotation.z);
+                        scene.add(obj);
+                    });
+                });
+                */
+
+                //glow obj 추가
+                var geometry = new THREE.SphereGeometry(15, 50, 50, 0, Math.PI * 2, 0, Math.PI * 2);
+                var material = new THREE.MeshNormalMaterial();
+                var sphere = new THREE.Mesh(geometry, material);
+                sphere.name = 'glow';
+                sphere.position.set(20, 20, 0);
+                addGlow(sphere);
+                scene.add(sphere);
+
+                var geometry2 = new THREE.SphereGeometry(15, 50, 50, 0, Math.PI * 2, 0, Math.PI * 2);
+                var material2 = new THREE.MeshBasicMaterial({wireframe: true});
+                var sphere2 = new THREE.Mesh( geometry2, material2 );
+                sphere2.name = 'glow';
+                sphere2.position.set(-20, 20, 0);
+                addGlow(sphere2);
+                scene.add(sphere2);
+
+                window.addEventListener( 'resize', function () {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize( window.innerWidth, window.innerHeight );
+                }, false );
+
+                animate();
+            }
+
+            var inConfic = 1;
+            var outConfic = 0;
+            function animate () {
+                requestAnimationFrame( animate );
+                controls.update();
+
+                //glow animate (반짝효과)
+                inConfic -= 0.05;
+                if (inConfic <= 0) {
+                    inConfic = 1;
+                }
+                outConfic += 0.05;
+                if (outConfic >= 1) {
+                    outConfic = 0;
+                }
+                glowInMaterial.uniforms.coeficient.value = inConfic;
+                glowOutMaterial.uniforms.coeficient.value = outConfic;
+
+                renderer.render( scene, camera );
+            }
+
+            function addGlow(obj) {
+                var object3d = new THREE.Object3D();
+                object3d.name = 'glow';
+
+                //내부 glow
+                var inGeometry    = obj.geometry.clone();
+                THREEx.dilateGeometry(inGeometry, 0.01);
+                var glowInMesh    = new THREE.Mesh(inGeometry, glowInMaterial);
+                object3d.add(glowInMesh);
+                
+                //외부 glow
+                var outGeometry    = obj.geometry.clone();
+                THREEx.dilateGeometry(outGeometry, 0.2);
+                var glowOutMesh    = new THREE.Mesh(outGeometry, glowOutMaterial);
+                object3d.add(glowOutMesh);
+                
+                obj.add(object3d);
+            }
+        </script>
+    </body>
+</html>
